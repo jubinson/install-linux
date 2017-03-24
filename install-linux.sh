@@ -15,21 +15,21 @@ INSTALL_BOOTLOADER=install-bootloader.sh
 
 # Make sure only root can run our script
 if [ "$(id -u)" != 0 ]; then
-   echo "This script must be run as root" 1>&2
+   echo "This script must be run as root"
    exit 1
 fi
 
 # Print usage
 if [ "$#" -eq 0 ];  then
-    echo "usage: `basename $0` BLOCK-DEVICE [DATA-DIRECTORY]" 1>&2
-    echo "  BLOCK-DEVICE is the block device to write to" 1>&2
-    echo "  DATA-DIRECTORY is the directory containaing data to write, default to current directory" 1>&2
+    echo "usage: `basename $0` BLOCK-DEVICE [DATA-DIRECTORY]"
+    echo "  BLOCK-DEVICE is the block device to write to"
+    echo "  DATA-DIRECTORY is the directory containaing data to write, default to current directory"
     exit 1
 fi
 
 # Check first argument is a block device
 if [ ! -b "$1" ]; then
-    echo "$1 is not a block device" 1>&2
+    echo "$1 is not a block device"
     exit 1
 fi
 BLOCK_DEV=$1
@@ -38,7 +38,7 @@ BLOCK_DEV=$1
 if [ "$2" ]; then
     # Check second argument is a directory
     if [ ! -d "$2" ]; then
-        echo "$2 is not a directory" 1>&2
+        echo "$2 is not a directory"
         exit 1
     fi
     DATA_DIR=$2
@@ -50,31 +50,38 @@ if [ "$2" ]; then
     fi
 fi
 
+# Check block device is a disk
+block_type=`lsblk -nr $BLOCK_DEV | awk 'NR == 1 {print $6}'`
+if [ "$block_type" != "disk" ]; then
+    echo "$BLOCK_DEV is not a disk"
+    exit 1
+fi
+
 # Check block device is a storage medium
 block_size=`sfdisk -s $BLOCK_DEV 2>/dev/null`
 if [ -z "$block_size" ]; then
-    echo "No medium found on $BLOCK_DEV" 1>&2
+    echo "No medium found on $BLOCK_DEV"
     exit 1
 fi
 
 # Check block device is not mounted
 block_mounted=`mount | grep $BLOCK_DEV`
 if [ "$block_mounted" ]; then
-    echo "$BLOCK_DEV is already mounted, please unmount it" 1>&2
+    echo "$BLOCK_DEV is already mounted, please unmount it"
     exit 1
 fi
 
 # Check presence of Linux kernel
 linux_kernel=`ls $DATA_DIR$KERNEL_WILDCARD 2>/dev/null`
 if [ -z "$linux_kernel" ]; then
-    echo "Linux kernel is missing, please add one" 1>&2
+    echo "Linux kernel is missing, please add one"
     exit 1
 fi
 
 # Check presence of device tree
 device_tree=`ls $DATA_DIR$DEVTREE_WILDCARD 2>/dev/null`
 if [ -z "$device_tree" ]; then
-    echo "Device tree is missing, please add one" 1>&2
+    echo "Device tree is missing, please add one"
     exit 1
 fi
 
@@ -82,10 +89,10 @@ fi
 rootfs=`ls $DATA_DIR$ROOTFS_WILDCARD 2>/dev/null`
 rootfs_num=`echo $rootfs | wc -w`
 if [ "$rootfs_num" -eq 0 ]; then
-    echo "Root file system is missing, please add one" 1>&2
+    echo "Root file system is missing, please add one"
     exit 1
 elif [ "$rootfs_num" -ge 2 ]; then
-    echo "Several root file systems, only one is allowed" 1>&2
+    echo "Several root file systems, only one is allowed"
     exit 1
 fi
 
@@ -120,7 +127,12 @@ mkfs.vfat -F 32 $vfat_partition >/dev/null 2>&1
 
 # Format Linux partition
 echo "Formating $linux_partition with ext4"
-mkfs.ext4 -F $linux_partition >/dev/null 2>&1
+mkfs_version=`mkfs.ext4 -V 2>&1 | awk 'NR == 1 {print $2}' | grep -o ^[0-9]*.[0-9]*`
+if [ `echo "$mkfs_version <= 1.42" | bc` -eq 1 ]; then
+    mkfs.ext4 -F $linux_partition >/dev/null 2>&1
+else
+    mkfs.ext4 -F -O ^metadata_csum,^64bit $linux_partition >/dev/null 2>&1
+fi
 
 # Create mount dir
 mkdir -p $MOUNT_DIR
