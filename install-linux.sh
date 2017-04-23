@@ -128,7 +128,7 @@ mkfs.vfat -F 32 $vfat_partition >/dev/null 2>&1
 # Format Linux partition
 echo "Formating $linux_partition with ext4"
 mkfs_version=`mkfs.ext4 -V 2>&1 | awk 'NR == 1 {print $2}' | grep -o ^[0-9]*.[0-9]*`
-if [ `echo "$mkfs_version <= 1.42" | bc` -eq 1 ]; then
+if ! echo $mkfs_version | awk '{ exit ($1 <= 1.42)}'; then
     mkfs.ext4 -F $linux_partition >/dev/null 2>&1
 else
     mkfs.ext4 -F -O ^metadata_csum,^64bit $linux_partition >/dev/null 2>&1
