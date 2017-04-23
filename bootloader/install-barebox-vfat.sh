@@ -3,7 +3,7 @@
 MOUNT_DIR=mnt
 BLOCK_DEV=$1
 SPL=MLO
-BOOTLOADER=u-boot.img
+BOOTLOADER=barebox.bin
 
 partition_suffix=`lsblk -nr $BLOCK_DEV | awk 'FNR == 2 {print $1}' | sed 's/.$//'`
 vfat_partition=/dev/$partition_suffix\1

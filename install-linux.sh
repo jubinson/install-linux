@@ -3,15 +3,12 @@
 VFAT_SIZE=128 # in Mb
 MOUNT_DIR=mnt
 ROOTFS_FIND=boot
-HOSTNAME_FILE=hostname.txt
+HOSTNAME_WILDCARD=hostname*
 ROOTFS_WILDCARD=*rootfs*
 KERNEL_WILDCARD=?Image*
 DEVTREE_WILDCARD=*.dtb
 MODULES_WILDCARD=modules*
 UDEV_WILDCARD=*.rules
-TXT_WILDCARD=*.txt
-SCRIPT_WILDCARD=*.sh
-INSTALL_BOOTLOADER=install-bootloader.sh
 
 # Make sure only root can run our script
 if [ "$(id -u)" != 0 ]; then
@@ -21,9 +18,9 @@ fi
 
 # Print usage
 if [ "$#" -eq 0 ];  then
-    echo "usage: `basename $0` BLOCK-DEVICE [DATA-DIRECTORY]"
+    echo "usage: `basename $0` BLOCK-DEVICE [INSTALL-BOOTLOADER]"
     echo "  BLOCK-DEVICE is the block device to write to"
-    echo "  DATA-DIRECTORY is the directory containaing data to write, default to current directory"
+    echo "  INSTALL-BOOTLOADER is the shell script to install the bootloader"
     exit 1
 fi
 
@@ -34,20 +31,9 @@ if [ ! -b "$1" ]; then
 fi
 BLOCK_DEV=$1
 
-# Second argument is not empty
+# Check second argument is not empty
 if [ "$2" ]; then
-    # Check second argument is a directory
-    if [ ! -d "$2" ]; then
-        echo "$2 is not a directory"
-        exit 1
-    fi
-    DATA_DIR=$2
-
-    # Add trailing /
-    last_character=`echo -n $DATA_DIR | tail -c 1`
-    if [ "$last_character" != "/" ]; then
-        DATA_DIR=$DATA_DIR/
-    fi
+    INSTALL_BOOTLOADER=$2
 fi
 
 # Check block device is a disk
@@ -72,21 +58,21 @@ if [ "$block_mounted" ]; then
 fi
 
 # Check presence of Linux kernel
-linux_kernel=`ls $DATA_DIR$KERNEL_WILDCARD 2>/dev/null`
+linux_kernel=`ls $KERNEL_WILDCARD 2>/dev/null`
 if [ -z "$linux_kernel" ]; then
     echo "Linux kernel is missing, please add one"
     exit 1
 fi
 
 # Check presence of device tree
-device_tree=`ls $DATA_DIR$DEVTREE_WILDCARD 2>/dev/null`
+device_tree=`ls $DEVTREE_WILDCARD 2>/dev/null`
 if [ -z "$device_tree" ]; then
     echo "Device tree is missing, please add one"
     exit 1
 fi
 
 # Check presence of one root file system
-rootfs=`ls $DATA_DIR$ROOTFS_WILDCARD 2>/dev/null`
+rootfs=`ls $ROOTFS_WILDCARD 2>/dev/null`
 rootfs_num=`echo $rootfs | wc -w`
 if [ "$rootfs_num" -eq 0 ]; then
     echo "Root file system is missing, please add one"
@@ -108,6 +94,9 @@ fi
 
 echo "Operation confirmed, performing installation"
 echo
+
+# Erase current partition table
+dd if=/dev/zero of=$BLOCK_DEV bs=1M count=16 status=none
 
 # Create 2 partitions: vfat (VFAT_SIZE) and Linux (remaining)
 echo "Creating vfat and Linux partitions on $BLOCK_DEV"
@@ -163,7 +152,7 @@ echo $fstab_root > $filename
 echo $fstab_boot >> $filename
 
 # Set hostname
-hostname=`cat $DATA_DIR$HOSTNAME_FILE 2>/dev/null`
+hostname=`cat $HOSTNAME_WILDCARD 2>/dev/null`
 hostname=`echo $hostname | awk '{print $1}'`
 filename=$MOUNT_DIR/etc/hostname
 if [ "$hostname" ]; then
@@ -172,22 +161,18 @@ if [ "$hostname" ]; then
 fi
 
 # Install kernel modules
-kernel_modules=`ls $DATA_DIR$MODULES_WILDCARD 2>/dev/null`
+kernel_modules=`ls $MODULES_WILDCARD 2>/dev/null`
 for i in $kernel_modules; do
     echo "Extracting `basename $i`"
     tar xf $i -C $MOUNT_DIR --warning=no-timestamp
 done
 
 # Install udev rule
-udev_rule=`ls $DATA_DIR$UDEV_WILDCARD 2>/dev/null`
+udev_rule=`ls $UDEV_WILDCARD 2>/dev/null`
 for i in $udev_rule; do
     echo "Copying `basename $i`"
     cp $i $MOUNT_DIR/etc/udev/rules.d/
 done
-
-# Copy this script
-echo "Copying `basename $0`"
-cp $0 $MOUNT_DIR/usr/local/bin
 
 # Unmout Linux partition
 echo "Unmounting $linux_partition"
@@ -198,42 +183,8 @@ echo
 echo "Mounting $vfat_partition"
 mount $vfat_partition $MOUNT_DIR
 
-# Install Linux kernel
-for i in $linux_kernel; do
-    echo "Copying `basename $i`"
-    cp $i $MOUNT_DIR
-done
-
-# Install device tree
-for i in $device_tree; do
-    echo "Copying `basename $i`"
-    cp $i $MOUNT_DIR
-done
-
-# Copy root file system
-echo "Copying `basename $rootfs`"
-cp $rootfs $MOUNT_DIR
-
-# Copy kernel modules
-for i in $kernel_modules; do
-    echo "Copying `basename $i`"
-    cp $i $MOUNT_DIR
-done
-
-# Copy udev rule
-for i in $udev_rule; do
-    echo "Copying `basename $i`"
-    cp $i $MOUNT_DIR
-done
-
-# Copy .txt files
-for i in `ls $DATA_DIR$TXT_WILDCARD 2>/dev/null`; do
-    echo "Copying `basename $i`"
-    cp $i $MOUNT_DIR
-done
-
-# Copy script files
-for i in `ls $DATA_DIR$SCRIPT_WILDCARD 2>/dev/null`; do
+# Copy all data
+for i in `find . -maxdepth 1 ! -type d ! -name .gitignore ! -name LICENSE ! -name README.md`; do
     echo "Copying `basename $i`"
     cp $i $MOUNT_DIR
 done
@@ -246,16 +197,10 @@ umount $MOUNT_DIR
 rmdir $MOUNT_DIR 2>/dev/null
 
 # Install Bootloader
-if ls $DATA_DIR$INSTALL_BOOTLOADER 2>/dev/null; then
+if [ -n "$INSTALL_BOOTLOADER" ]; then
     echo
     echo "Installing Bootloader"
-    if [ "$DATA_DIR" ]; then
-        cd $DATA_DIR
-    fi
-    ./$INSTALL_BOOTLOADER $BLOCK_DEV >/dev/null 2>&1
-    if [ "$DATA_DIR" ]; then
-        cd - >/dev/null
-    fi
+    ./$INSTALL_BOOTLOADER $BLOCK_DEV
 fi
 
 echo
